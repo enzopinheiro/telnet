@@ -1,1 +1,1 @@
-# telnet
+# TelNet
