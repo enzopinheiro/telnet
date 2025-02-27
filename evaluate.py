@@ -15,9 +15,9 @@ from utilities.plots import plot_error_maps, plot_heatmap, plot_obs_ypred_maps, 
 
 def read_obs_data():
 
-    root_datadir = os.getenv('DATADIR')
+    root_datadir = os.getenv('TELNET_DATADIR')
     if root_datadir is None:
-        raise ValueError('Environment variable DATADIR is not set.')
+        raise ValueError('Environment variable TELNET_DATADIR is not set.')
 
     idcs_list = ['oni', 'mei', 'atn-sst', 'ats-sst', 'atl-sst', 'iod', 'iobw', 'nao', 'pna', 'qbo', 'aao', 'ao']
     indices = read_indices_data('1941-01-01', '2023-12-01', root_datadir, idcs_list, '_1941-2023')
@@ -51,9 +51,9 @@ def read_num_models_data(test_yrs, init_month, Ylat, Ylon, Ymn_obs, Ystd_obs):
     months_str = {1: 'jan', 2: 'feb', 3: 'mar', 4: 'apr', 5: 'may', 6: 'jun', 
                   7: 'jul', 8: 'aug', 9: 'sep', 10: 'oct', 11: 'nov', 12: 'dec'}
     
-    root_datadir = os.getenv('DATADIR')
+    root_datadir = os.getenv('TELNET_DATADIR')
     if root_datadir is None:
-        raise ValueError('Environment variable DATADIR is not set.')
+        raise ValueError('Environment variable TELNET_DATADIR is not set.')
     dynmodel_dir = f'{root_datadir}/numerical_models_data/{months_str[init_month]}/'
     
     models = ['cola-rsmas-ccsm4', 'cancm4i', 'gem-nemo', 'gfdl-spear', 'seas5']
