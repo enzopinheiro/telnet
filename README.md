@@ -1,5 +1,5 @@
 # TelNet
-[![Paper]](https://www.nature.com/articles/s43247-025-02207-2)
+[Click here to read the paper](https://www.nature.com/articles/s43247-025-02207-2)
 
 This project contains the codes necessary to reproduce the results of "An interpretable machine learning model for seasonal precipitation forecasting" by E. Pinheiro and T. B. M. J. Ouarda.
 It requires about 16GB of VRAM and takes about a 4 days to run the full sampling procedure on a single A100 GPU. 
