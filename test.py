@@ -7,12 +7,10 @@ import pandas as pd
 import torch.nn as nn
 from typing import Dict, List
 from random import choices, sample
-from copy import deepcopy
-from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from models.model import TelNet
 from utilities.plots import plot_obs_ypred_maps
-from utils import CreateDataset, DataManager, EvalMetrics, flatten_lead_dim, make_dir, preprocess_num_models
+from utils import CreateDataset, DataManager, EvalMetrics, make_dir, preprocess_num_models
 from utils import DEVICE, exp_data_pt_dir, exp_data_dir, exp_results_dir
 from utils import month2onehot, set_seed, compute_anomalies, scalar2categ
 
@@ -62,17 +60,20 @@ def preprocess_data(
     Xdm['auto'].monthly2seasonal('var', 'sum', True)
     Xdm['auto'].compute_statistics(stat_yrs, ['mean', 'std'], 'var')
     Xdm['auto'].to_anomalies('var', stdized=True)
+    Xdm['auto'].apply_detrend()
     Xdm['auto'].add_seq_dim('var', time_steps)
     Xdm['auto'].replace_nan('var', -999.)
 
-    Xdm['cov'].compute_statistics(stat_yrs, ['mean', 'std'])
-    Xdm['cov'].to_anomalies('var', stdized=True)
+    # Xdm['cov'].compute_statistics(stat_yrs, ['mean', 'std'])
+    # Xdm['cov'].to_anomalies('var', stdized=True)
+    Xdm['cov'].apply_detrend()
     Xdm['cov'].add_seq_dim('var', time_steps)
     Xdm['cov'].replace_nan('var', -999.)
     
     Ydm.monthly2seasonal('var', 'sum', True)
     Ydm.compute_statistics(stat_yrs, ['mean', 'std'], 'var') 
     Ydm.to_anomalies('var', stdized=True)
+    Ydm.apply_detrend()
     Ydm.compute_statistics(stat_yrs, ['terciles'], 'var')
     Ydm.add_seq_dim('var', lead, 'lead')
     Ydm.replace_nan('var', -999.)
@@ -104,38 +105,18 @@ def preprocess_data(
 
     return Xdm, Ydm
 
-def read_sample_files(seed_n, train_yrs=None, val_yrs=None, test_yrs=None):
+def split_sample():
 
-    if os.path.exists(f'{exp_data_dir}/test_years_{seed_n}.txt'):
-        test_yrs = np.sort(np.loadtxt(f'{exp_data_dir}/test_years_{seed_n}.txt', dtype=int))
-    else:
-        np.savetxt(f'{exp_data_dir}/test_years_{seed_n}.txt', test_yrs, fmt='%i')
-    if os.path.exists(f'{exp_data_dir}/val_years_{seed_n}.txt'):
-        val_yrs = np.sort(np.loadtxt(f'{exp_data_dir}/val_years_{seed_n}.txt', dtype=int))
-    else:
-        np.savetxt(f'{exp_data_dir}/val_years_{seed_n}.txt', val_yrs, fmt='%i')
-    if os.path.exists(f'{exp_data_dir}/train_years_{seed_n}.txt'):
-        train_yrs = np.sort(np.loadtxt(f'{exp_data_dir}/train_years_{seed_n}.txt', dtype=int))
-    else:
-        np.savetxt(f'{exp_data_dir}/train_years_{seed_n}.txt', train_yrs, fmt='%i')
-    return train_yrs, val_yrs, test_yrs
-
-def split_sample(samples, test_samples=None):
-
-    if test_samples is None:
-        test_samples = np.array(sample(range(1982, 2024), 20))
-    train_samples = np.array([i for i in samples if (i not in test_samples)])
-    train_samples, val_samples = train_test_split(train_samples, test_size=0.15)
-    train_samples = np.sort(train_samples)
-    val_samples = np.sort(np.append(val_samples, [2002]))
-    test_samples = choices(test_samples, k=len(test_samples))
+    train_samples = np.arange(1941, 1993)
+    val_samples = np.arange(1993, 2003)
+    test_samples = np.arange(2003, 2023)
+    test_subsamples = choices(test_samples, k=len(test_samples))  # Bootstrap sampling for test years
         
-    return train_samples, val_samples, test_samples
+    return train_samples, val_samples, test_subsamples
 
 def training(X: Dict[str, DataManager], 
              Y: DataManager, 
-             model_config:list,
-             load_init_state=False):
+             model_config:list):
     
     nunits, drop, weight_scale, epochs, lr, clip, batch_size, nfeats, time_steps, lead, nmembs = model_config
     B = Y['train'].shape[0]
@@ -164,10 +145,14 @@ def training(X: Dict[str, DataManager],
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     telnet = TelNet(nmembs, H, W, I, D, T, L, drop, weight_scale).to(DEVICE)
-    if load_init_state:
-        telnet.load_state_dict(torch.load(f'{exp_data_pt_dir}/telnet_init.pt', weights_only=True))
-    telnet.train_model(train_dataloader, epochs, clip, lr=lr, val_dataloader=val_dataloader, lat_wgts=lat_wgts)
-    
+    if os.path.exists(f'{exp_data_pt_dir}/telnet.pt'):
+        print ('Loading pre-trained model ...')
+        telnet.load_state_dict(torch.load(f'{exp_data_pt_dir}/telnet.pt', weights_only=True))
+    else:
+        print ('Training model ...')
+        telnet.train_model(train_dataloader, epochs, clip, lr=lr, val_dataloader=val_dataloader, lat_wgts=lat_wgts)
+        torch.save(telnet.state_dict(), f'{exp_data_pt_dir}/telnet.pt')
+
     return telnet
 
 def inference(X: Dict[str, DataManager], 
@@ -324,16 +309,20 @@ def evaluate_test(Y: DataManager,
                 title = 'Nov-DJF'
             elif i == 1:
                 title = 'Feb-MAM'
-            if i == 10 or i ==1:
-                result_dir = f'{exp_results_dir}/test'
-                make_dir(f'{result_dir}/forecasts_{seed_n}')
-                for n, yr in enumerate(years):
-                    plot_obs_ypred_maps(x, y, [yr], 
-                                    Yval_i_total[3::lead][n:n+1], Ypred_i_total.mean(1)[3::lead][n:n+1], 
-                                    Yval_i.values[3::lead][n:n+1], Ypred_i.mean(1)[3::lead][n:n+1], 
-                                    Yval_i_categ[3::lead][n:n+1], Ypred_i_probs[3::lead][n:n+1],
-                                    vsel_wgts_i[3::lead][n], var_names, '', 
-                                    f'forecast_{yr}_{title}.png', f'{result_dir}/forecasts_{seed_n}', (13, 7))
+            elif i == 4:
+                title = 'May-JJA'
+            elif i == 7:
+                title = 'Aug-SON'
+            result_dir = f'{exp_results_dir}/test'
+            make_dir(f'{result_dir}/forecasts_{seed_n}')
+            for n, yr in enumerate(years):
+                plot_obs_ypred_maps(x, y, [yr], 
+                                Yval_i_total[3::lead][n:n+1], Ypred_i_total.mean(1)[3::lead][n:n+1], 
+                                Yval_i.values[3::lead][n:n+1], Ypred_i.mean(1)[3::lead][n:n+1], 
+                                Yval_i_categ[3::lead][n:n+1], Ypred_i_probs[3::lead][n:n+1],
+                                vsel_wgts_i[3::lead][n], var_names, '', 
+                                f'forecast_{yr}_{title}.png', f'{result_dir}/forecasts_{seed_n}', (13, 7),
+                                levels_totals=[0, 100, 200, 300, 400, 500, 600, 800, 1000, 1200, 1400])
         
     RMSESS = np.concatenate([((1-(np.nanmean(RMSE[0], axis=np.s_[2, 3])/np.nanmean(RMSE[i], axis=np.s_[2, 3])))*100)[None] for i in range(1, RMSE.shape[0])], 0)  # nmodels, ninits, nleads
     RPSS = np.concatenate([((1-(np.nanmean(RPS[0], axis=np.s_[2, 3])/np.nanmean(RPS[i], axis=np.s_[2, 3])))*100)[None] for i in range(1, RPS.shape[0])], 0)  # nmodels, ninits, nleads
@@ -346,6 +335,7 @@ def main(arguments):
     checkpoints_dir = f'{exp_data_dir}/checkpoints_model'
     metric_names = ['Yval_RPS', 'RMSE', 'RPS', 'ranks', 'ranks_ext', 'obs_freq', 'prob_avg', 'pred_marginal', 'rel', 'res', 'RMSESS', 'RPSS']
     metrics = [None]*len(metric_names)
+    plot_ypred = True if seed_n % 10 == 0 else False
     if os.path.exists(f'{checkpoints_dir}/varsel_{seed_n}.nc'):
         vs_ds = xr.open_dataset(f'{checkpoints_dir}/varsel_{seed_n}.nc')
     else:
@@ -361,15 +351,13 @@ def main(arguments):
     print (f'Running sample {seed_pos+1}/{len(seeds)} ...')
     set_seed(seed_n)
     
-    test_yrs = np.arange(2003, 2023)
-    train_yrs, val_yrs, test_yrs = split_sample(np.arange(1941, 2002), test_yrs)
-    train_yrs, val_yrs, test_yrs = read_sample_files(seed_n, train_yrs, val_yrs, test_yrs)
+    train_yrs, val_yrs, test_yrs = split_sample()
     
     time_steps = model_config[-3]
     lead = model_config[-2]
     nmembs = model_config[-1]
-    Xdm, Ydm = preprocess_data(X, Y, train_yrs, val_yrs, test_yrs, time_steps, lead, seed_n) # remove seed
-    telnet = training(Xdm, Ydm, model_config, load_init_state=True)
+    Xdm, Ydm = preprocess_data(X, Y, train_yrs, val_yrs, test_yrs, time_steps, lead, seed_n)
+    telnet = training(Xdm, Ydm, model_config)
     Ypred_val, _ = inference(Xdm, Ydm, telnet, 'val')
     Yval_RPS = evaluate_val(Ydm, Ypred_val, init_months, lead)
     Ypred_test, Wgts = inference(Xdm, Ydm, telnet, 'test')
@@ -380,7 +368,7 @@ def main(arguments):
         dyn_dl_totals = dyn_totals + dl_totals
         baseline_models[i+1] = dyn_dl_totals
     
-    RMSE, RPS, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, RMSESS, RPSS = evaluate_test(Ydm, Ypred_test, baseline_models, init_months, lead, seed_n, Wgts, np.append(['ylag'], model_predictors), False)
+    RMSE, RPS, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, RMSESS, RPSS = evaluate_test(Ydm, Ypred_test, baseline_models, init_months, lead, seed_n, Wgts, np.append(['ylag'], model_predictors), plot_ypred)
     metrics = [Yval_RPS, RMSE, RPS, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, RMSESS, RPSS]
     
     for i, metric in enumerate(metrics):

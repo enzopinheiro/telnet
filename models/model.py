@@ -12,7 +12,7 @@ from modules.tft_submodules import VariableSelectionNetwork
 
 class TelNet(nn.Module):
 
-    def __init__(self, N, H, W, I, D, T, L, drop, weight_scale):
+    def __init__(self, N, H, W, I, D, T, L, drop, head=True):
         super(TelNet, self).__init__()
         self.L = L
 
@@ -25,15 +25,22 @@ class TelNet(nn.Module):
         self.static_emb = nn.Linear(12, D, False)
         self.varsel = VariableSelectionNetwork({f'{i}':D for i in range(I+1)}, D, 
                                                input_embedding_flags={f'{i}':True for i in range(I+1)}, 
-                                               dropout=drop)
+                                               dropout=0.)
         self.layer_norm1 = nn.LayerNorm(D)
-        self.decoder = nn.LSTM(D, D, 1, batch_first=True, dropout=drop)
+        self.decoder = nn.LSTM(D, D, 1, batch_first=True, dropout=0.)
+        self.dropout = nn.Dropout(drop)
         self.layer_norm2 = nn.LayerNorm(D)
         self.layer_norm3 = nn.LayerNorm(D)
         # self.attn = InterpretableMultiHeadAttention(1, D, drop)
-        self.head = nn.Linear(D, N*H*W)
-        if weight_scale != 0:
-            self.init_weights(weight_scale)
+        if head:
+            self.head = nn.Sequential(
+                nn.Linear(D, N*H*W),
+                nn.Unflatten(-1, (N, H, W))
+            )
+        else:
+            self.head = nn.Identity()
+       
+        self.init_weights()
     
     def init_weights(self, scale=0.02):
         for m in self.modules():
@@ -53,18 +60,20 @@ class TelNet(nn.Module):
             elif isinstance(m, nn.Conv2d):
                 nn.init.trunc_normal_(m.weight, std=scale)
                 nn.init.zeros_(m.bias)
-        
+
     def forward(self, X, xmask):
 
         Xauto, Xcov, Xstatic = X
         B, T, H, W = Xauto.shape  # B, T, H, W
         _, _, I = Xcov.shape  # B, T, I
 
-        xmask = xmask[0:1]
+        xmask = xmask[0:1, 0:1]
         Xstatic = torch.stack([torch.roll(Xstatic, i, 1) for i in range(-T+1, self.L+1)], 1)
         Xstatic = self.static_emb(Xstatic.view(B*(T+self.L), -1)).view(B, T+self.L, -1)
         Xstatic_lag = Xstatic[:, :T]  # B, T, D
         Xstatic_lead = Xstatic[:, T:]  # B, L, D
+        Xstatic_lead = self.dropout(Xstatic_lead)
+        Xstatic_lag = self.dropout(Xstatic_lag)
         # Xstatic_lead = self.lead_emb(Xstatic_lead.view(B*self.L, -1)).view(B, self.L, -1)  # B, L, D
         
         Xauto_emb = []
@@ -73,6 +82,7 @@ class TelNet(nn.Module):
             Xout = self.auto_emb(Xin)  # B, D, 1, 1
             Xauto_emb.append(Xout.squeeze((2, 3)))
         Xauto_emb = torch.stack(Xauto_emb, 1)  # B, T, D
+        Xauto_emb = self.dropout(Xauto_emb)
 
         Xcov_emb = []
         for i in range(I):
@@ -82,7 +92,7 @@ class TelNet(nn.Module):
                 Xcov_emb_i.append(Xout)
             Xcov_emb.append(torch.stack(Xcov_emb_i, 1))
         Xcov_emb = torch.stack(Xcov_emb, 2)  # B, T, I, D
-
+        Xcov_emb = self.dropout(Xcov_emb)
         Xemb = torch.concat((Xauto_emb[:, :, None], Xcov_emb), 2)  # B, T, I+1, D
 
         Xsel = []
@@ -96,23 +106,22 @@ class TelNet(nn.Module):
         yemb = []
         wgts = [varsel_wgts]
         for l in range(self.L):
+            Xemb = self.dropout(Xemb)
             ydec, _ = self.decoder(Xemb)  # B, T, D  or B, 1, D
             ydec = self.layer_norm2(ydec[:, -1:])  # B, 1, D
-            ydec = ydec + Xstatic_lead[:, l:l+1]  # B, 1, D
+            ydec = ydec[:, -1:] + Xstatic_lead[:, l:l+1]  # B, 1, D
             yemb.append(ydec.squeeze(1))  # B, 1, D
             if l < self.L-1:
-                Xemb_ = torch.concat((ydec[:, :, None], Xcov_emb[:, -1:]), 2)  # B, 1, I+1, D
-                Xin = {f'{p}': Xemb_[:, 0, p] + Xstatic_lead[:, l] for p in range(Xemb_.shape[2])}
+                Xemb_ = torch.concat((ydec[:, :, None], Xcov_emb[:, -1:] + Xstatic_lag[:, -1:, None].repeat_interleave(I, 2)), 2)  # B, 1, I+1, D
+                Xin = {f'{p}': Xemb_[:, 0, p] for p in range(Xemb_.shape[2])}
                 Xout, varsel_wgts = self.varsel(Xin)  # [B, D], [B, I+1]
                 Xout = self.layer_norm3(Xout)  # B, D
                 wgts.append(varsel_wgts)
                 Xemb = Xout.unsqueeze(1)
-                # Xemb = torch.concat((Xemb[:, 1:], Xout[:, None]), 1)  # B, T, D
         yemb = torch.stack(yemb, 1)  # B, L, D
         wgts = torch.stack(wgts, 1).squeeze(2)  # B, L, I+1
-
-        Y = self.head(yemb)  # B, L, N*H*W
-        Y = Y.view(B, self.L, -1, H, W)  # B, L, N, H, W
+        yemb = self.dropout(yemb)
+        Y = self.head(yemb)  # B, L, N, H, W
         
         return Y, wgts
     
@@ -151,7 +160,7 @@ class TelNet(nn.Module):
             scheduler.step()
             if val_dataloader is not None:
                 val_loss = self.val_step(val_dataloader, criterion, lat_wgts[:, 3:])
-                earlystop(val_loss)
+                earlystop(val_loss, epoch)
                 if earlystop.counter == 0:
                     best_state = deepcopy(self.state_dict())
                 if earlystop.early_stop:

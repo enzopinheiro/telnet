@@ -12,7 +12,7 @@ from test import main as test_main
 from utilities.plots import plot_error_maps, plot_mn_varsel_wgts, plot_rank_histogram, plot_prob_diags, scorebars
 
 
-def main(nsamples, reproduce_paper=True):
+def main(nsamples, config_n):
     torch.multiprocessing.set_start_method('spawn')
     init_time = datetime.now()
     checkpoints_dir = f'{exp_data_dir}/checkpoints_model'
@@ -34,19 +34,17 @@ def main(nsamples, reproduce_paper=True):
     x, y = np.meshgrid(Y.lon, Y.lat)
     coords = [(x, y) for i in range(len(models_names))]
 
-    model_predictors = np.loadtxt(os.path.join(f'{exp_data_dir}/models/', 'final_feats.txt'), dtype=str)
-    model_config = np.loadtxt(os.path.join(f'{exp_data_dir}/models/', 'model_config.txt'), dtype=float)
+    model_config = search_arr[config_n]
     model_config = [int(x) if x % 1 == 0 else float(x) for x in model_config]
+    nfeats = model_config[7]
+    model_predictors = np.load(os.path.join(f'{exp_data_dir}/models/', f'final_feats.npy'), allow_pickle=True)[:nfeats]
     X['cov']['var'] = X['cov']['var'].sel(indices=model_predictors)
 
     if os.path.exists(os.path.join(exp_data_dir, 'seeds_model.txt')):
         # Read the existing seeds file
         seeds = np.loadtxt(os.path.join(exp_data_dir, 'seeds_model.txt'), delimiter=',', dtype=int)
     else:
-        if reproduce_paper:
-            seeds = np.arange(nsamples)
-        else:
-            seeds = sample(range(100000), nsamples)
+        seeds = np.arange(nsamples)
         # Save seeds as a text file
         np.savetxt(os.path.join(exp_data_dir, 'seeds_model.txt'), seeds, delimiter=',', fmt='%i')   
     
@@ -82,32 +80,34 @@ def main(nsamples, reproduce_paper=True):
     RPSS = np.concatenate(RPSS, axis=0)  # (nsample, nmodel-2, ninits, nleads)
     varsel_dict = {j:np.concatenate(varsel_dict[j], axis=0) for j in init_months}  # dict values have shape (nsamples, nleads, nfeats)
     
-    gs_rmse = {'plot_specs': [2, 1, 0.2, 0.1], 'subplot_specs': [[1, 3, None, None], [1, 4, None, None]], 'fig_size': (12, 8)}
-    gs_rps = {'plot_specs': [2, 1, 0.2, 0.1], 'subplot_specs': [[1, 3, None, None], [1, 3, None, None]], 'fig_size': (12, 8)}
-
-    # Plots
-    for ii, i in enumerate(init_months):
-        for jj, j in enumerate([3, 4, 5]):
-            RMSE_ = np.nanmean(RMSE[:, :, ii, jj], axis=0)  # (nmodel, nlat, nlon)
-            plot_error_maps(coords, RMSE_, models_names, f'{result_dir}/RMSE_{i}_{j}', '', gs_rmse, 'RMSE', True, cbar_orientation='vertical')
-            RPS_ = np.nanmean(RPS[:, :, ii, jj], axis=0)  # (nmodel-1, nlat, nlon)
-            plot_error_maps(coords, RPS_, models_names[0:-1], f'{result_dir}/RPS_{i}_{j}', '', gs_rps, 'RPS', True, cbar_orientation='vertical')
-            ranks_ = ranks[:, :, ii, jj]  # (nsample, nmodel-1, nvalidpoints*nyrs)
-            plot_rank_histogram(ranks_, models_names[0:-1], f'{result_dir}/rank_histogram_{i}_{j}', 2, 3, (15, 10))
-            ranks_ext_ = ranks_ext[:, :, ii, jj]  # (nsample, nmodel-1, nvalidpoints*nyrs)
-            plot_rank_histogram(ranks_ext_, models_names[0:-1], f'{result_dir}/rank_histogram_ev_{i}_{j}', 2, 3, (15, 10))
-            obs_freq_ = obs_freq[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
-            prob_avg_ = prob_avg[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
-            pred_marginal_ = pred_marginal[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
-            rel_ = rel[:, :, ii, jj]  # (nsample, nmodel-1, ncategs)
-            res_ = res[:, :, ii, jj]  # (nsample, nmodel-1, ncategs)
-            plot_prob_diags(prob_avg_, obs_freq_, pred_marginal_, rel_, res_, models_names[0:-1], f'{result_dir}/prob_diags_{i}_{j}', 2, 3, (22, 10))
-
+    gs_rmse = {'plot_specs': [2, 1, 0.2, 0.2], 'subplot_specs': [[1, 3, None, None], [1, 4, None, None]], 'fig_size': (14, 8)}
+    gs_rps = {'plot_specs': [2, 1, 0.2, 0.2], 'subplot_specs': [[1, 3, None, None], [1, 3, None, None]], 'fig_size': (10, 8)}
     init_months_str = ['Feb', 'May', 'Aug', 'Nov']
     xlabels = {'Feb': ['MAM', 'AMJ', 'MJJ'],
                'May': ['JJA', 'JAS', 'ASO'],
                'Aug': ['SON', 'OND', 'NDJ'],
                'Nov': ['DJF', 'JFM', 'FMA']}
+
+    # Plots
+    for ii, i in enumerate(init_months):
+        for jj, j in enumerate([3, 4, 5]):
+            imon_str = init_months_str[ii]
+            lead_str = xlabels[imon_str][jj]
+            RMSE_ = np.nanmean(RMSE[:, :, ii, jj], axis=0)  # (nmodel, nlat, nlon)
+            plot_error_maps(coords, RMSE_, models_names, f'{result_dir}/RMSE_{imon_str}_{lead_str}', '', gs_rmse, 'RMSE', True, cbar_orientation='vertical')
+            RPS_ = np.nanmean(RPS[:, :, ii, jj], axis=0)  # (nmodel-1, nlat, nlon)
+            plot_error_maps(coords, RPS_, models_names[0:-1], f'{result_dir}/RPS_{imon_str}_{lead_str}', '', gs_rps, 'RPS', True, cbar_orientation='vertical')
+            ranks_ = ranks[:, :, ii, jj]  # (nsample, nmodel-1, nvalidpoints*nyrs)
+            plot_rank_histogram(ranks_, models_names[0:-1], f'{result_dir}/rank_histogram_{imon_str}_{lead_str}', 2, 3, (15, 10))
+            ranks_ext_ = ranks_ext[:, :, ii, jj]  # (nsample, nmodel-1, nvalidpoints*nyrs)
+            plot_rank_histogram(ranks_ext_, models_names[0:-1], f'{result_dir}/rank_histogram_ev_{imon_str}_{lead_str}', 2, 3, (15, 10))
+            obs_freq_ = obs_freq[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
+            prob_avg_ = prob_avg[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
+            pred_marginal_ = pred_marginal[:, :, ii, jj]  # (nsample, nmodel-1, ncategs, nbins)
+            rel_ = rel[:, :, ii, jj]  # (nsample, nmodel-1, ncategs)
+            res_ = res[:, :, ii, jj]  # (nsample, nmodel-1, ncategs)
+            plot_prob_diags(prob_avg_, obs_freq_, pred_marginal_, rel_, res_, models_names[0:-1], f'{result_dir}/prob_diags_{imon_str}_{lead_str}', 2, 3, (22, 10))
+
     scorebars(RMSESS, xlabels, models_names[1:], init_months_str, 'RMSESS', f'{result_dir}')
     scorebars(RPSS, xlabels, models_names[1:-1], init_months_str, 'RPSS', f'{result_dir}')
     plot_mn_varsel_wgts(varsel_dict, np.append(['ypred'], model_predictors), xlabels, init_months, init_months_str, 'varsel_weights_mn', f'{result_dir}')
@@ -118,6 +118,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Model test sampling')
     parser.add_argument('-n','--number', help='Sample size', required=True, default=1000)
+    parser.add_argument('-c', '--config', help='Configuration number', required=True, default=0)
     args = vars(parser.parse_args())
     n = int(args['number'])
-    main(n, reproduce_paper=True)
+    config_n = int(args['config'])
+    main(n, config_n)

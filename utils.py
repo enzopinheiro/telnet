@@ -48,14 +48,14 @@ points_ce = geometry.Polygon([(a, s) for a, s in zip(x_, y_)])
 def get_search_matrix():
 
     # Hyperparameters
-    nunits = [1024, 512, 128]  #  
-    dropout = [0., 0.05, 0.25]  # 
+    nunits = [1024, 512]  #  
+    dropout = [0.1, 0.2]  # 
     weight_scale = [0.02]
-    epochs = [10, 25]  # 
+    epochs = [10]  # 
     max_grad_norm = [0.01]  # 
     learning_rate = [1e-3, 1e-4]  # 
-    batch_sizes = [1024]
-    nfeats = [5, 4, 3, 2]  # 
+    batch_sizes = [1024, 1]
+    nfeats = [4, 2]  # 
     time_steps = [2, 1]  #  
     lead = [6]
     nmembs = [20]
@@ -74,23 +74,25 @@ def read_obs_data():
     if root_datadir is None:
         raise ValueError('Environment variable TELNET_DATADIR is not set.')
 
-    idcs_list = ['oni', 'mei', 'atn-sst', 'ats-sst', 'atl-sst', 'iod', 'iobw', 'nao', 'pna', 'qbo', 'aao', 'ao']
-    indices = read_indices_data('1941-01-01', '2023-12-01', root_datadir, idcs_list, '_1941-2023')
-    pcp = read_era5_data('pr', root_datadir, points_ce)
+    era5_dir = f'{root_datadir}/era5/'
+
+    idcs_list = ['oni', 'atn-sst', 'ats-sst', 'atl-sst', 'iod', 'iobw', 'nao', 'pna', 'aao', 'ao']
+    indices = read_indices_data('1941-01-01', '2023-12-01', era5_dir, idcs_list, '_1941-2023')
+    pcp = read_era5_data('pr', era5_dir, mask_ocean=True, period=('1940-01-01', '2024-01-01'))
 
     cov_date_s = ('1941-01-01', '2023-12-01')
     auto_date_s = ('1940-12-01', '2024-01-01')
     pred_date_s = ('1940-12-01', '2024-01-01')
-    ce_bounds = ((-1.75, -8.5), (-42.75, -36.))  # ERA5
+    target_bounds = ((12., 8.), (-86., -82.))  # ERA5
     
     X = {'auto': deepcopy(pcp['pr']), 'cov': deepcopy(indices)}
     Y = deepcopy(pcp['pr'])
 
     Xdm = prepare_X_data(X, auto_date_s, cov_date_s, 
                          cov_bounds=((None, None), (None, None)), 
-                         auto_bounds=ce_bounds)
+                         auto_bounds=target_bounds)
 
-    Ydm = prepare_Y_data(Y, pred_date_s, region_bounds=ce_bounds)
+    Ydm = prepare_Y_data(Y, pred_date_s, region_bounds=target_bounds)
 
     return Xdm, Ydm, idcs_list
 
@@ -196,19 +198,22 @@ def read_indices_data(init_date, final_date, datadir, indices='all', institute='
 
     return df
 
-def read_era5_data(var, datadir, region_mask=None):
+def read_era5_data(var, datadir, region_mask=None, mask_ocean=False, period=('1940-01-01', '2024-12-01')):
 
-    df_var = xr.open_dataset(f'{datadir}/e5_monthly_{var}_south_america_1940-2024.nc')
-    
+    df_var = xr.open_dataset(f'{datadir}/e5_monthly_{var}_south-america_1940-2024.nc').sel(time=slice(period[0], period[1]))
     if region_mask is not None:
         mask = shape2mask(region_mask, df_var['lon'].values, df_var['lat'].values, 1.)
         df_var['pr'].values[:, ~mask] = np.nan
+    if mask_ocean:
+        lat = df_var['lat'].values
+        lon = df_var['lon'].values
+        mask = xr.open_dataset(f'{datadir}/e5_land_sea_mask_south_america.nc').sel(lat=lat, lon=lon)
+        df_var = df_var.where(np.tile(mask['lsm'].values, (df_var.time.size, 1, 1)) > 0.5, np.nan)
 
-    if var == 'pr':
-        ndays = np.tile(np.array([monthrange(i.year, i.month)[1] for i in pd.to_datetime(df_var['pr'].time.values)])[:, None, None], ((1, df_var['pr'].shape[1], df_var['pr'].shape[2])))
-        df_var['pr'] = df_var['pr']*1000*ndays
-        df_var['pr']['units'] = 'mm'
-    
+    ndays = np.tile(np.array([monthrange(i.year, i.month)[1] for i in pd.to_datetime(df_var['pr'].time.values)])[:, None, None], ((1, df_var['pr'].shape[1], df_var['pr'].shape[2])))
+    df_var['pr'] = df_var['pr']*1000*ndays
+    df_var['pr']['units'] = 'mm'
+
     return df_var
 
 def shape2mask(poly_limis, x, y, buffer):
@@ -228,10 +233,8 @@ def prepare_X_data(X, auto_date_slice, cov_date_slice,
                    auto_coarsen=None):  # HERE
 
     Xcov_dm = DataManager(X['cov'], cov_date_slice[0], cov_date_slice[1], cov_bounds, 'cov')
-    Xcov_dm.apply_detrend()
 
     Xauto_dm = DataManager(X['auto'], auto_date_slice[0], auto_date_slice[1], auto_bounds, 'auto', coarsen=auto_coarsen)  # HERE
-    Xauto_dm.apply_detrend()
 
     Xdm = {'auto': Xauto_dm, 'cov': Xcov_dm}
 
@@ -240,7 +243,6 @@ def prepare_X_data(X, auto_date_slice, cov_date_slice,
 def prepare_Y_data(Y, date_slice, region_bounds=((90, -90), (-180, 180)), coarsen=None):  # HERE
 
     Ydm = DataManager(Y, date_slice[0], date_slice[1], region_bounds, 'pred', coarsen=coarsen)  # HERE
-    Ydm.apply_detrend()
 
     return Ydm
 
@@ -708,6 +710,10 @@ class EvalMetrics:
         "root mean ensemble variance"
 
         return np.sqrt(np.nanmean(np.nansum((y_true[:, None] - y_pred)**2, 1)/(y_pred.shape[1]-1), axis=ax))
+    
+    def SSR(y_true, y_pred, ax=0):
+
+        return np.sqrt((y_pred.shape[0]+1)/y_pred.shape[0])*EvalMetrics.RMEV(y_true, y_pred, ax)/EvalMetrics.RMSE(y_true, y_pred.mean(1), ax)
     
     def spread_skill_ratio(y_true, y_pred, ax=0):
 
