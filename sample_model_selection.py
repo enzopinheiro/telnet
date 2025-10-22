@@ -16,7 +16,7 @@ from utils import exp_data_dir, exp_results_dir, make_dir, read_obs_data, get_se
 from utilities.plots import plot_boxplot, plot_error_maps, plot_mn_varsel_wgts, plot_model_freq, plot_feat_freq, plot_pca_maps, plot_prob_diags, plot_rank_histogram
 
 
-def main(nsamples):
+def main(nsamples, iconfig=0, fconfig=-1, which_gpu=None):
     torch.multiprocessing.set_start_method('spawn')
     init_time = datetime.now()
     checkpoints_dir = f'{exp_data_dir}/checkpoints_sel'
@@ -36,18 +36,30 @@ def main(nsamples):
         # Save seeds as a text file
         np.savetxt(os.path.join(exp_data_dir, 'seeds_sel.txt'), seeds, delimiter=',', fmt='%i')
 
-    nproc = 4  # Number of processes to run in parallel. Not recommended to run in serial mode because it will take a long time
-    with Pool(nproc) as p:
-        p.map(selection_main,
-                    zip(seeds,
-                        repeat(deepcopy(X)),
-                        repeat(deepcopy(Y)),
-                        repeat(deepcopy(model_predictors)),
-                        repeat(search_arr),
-                        repeat(seeds)
-                        ),
-            chunksize=1
-        )
+    if fconfig == -1:
+        fconfig = nsamples
+
+    seed_slice = seeds[iconfig:fconfig]
+    if which_gpu is not None:
+        DEVICE = torch.device(f"cuda:{which_gpu}" if torch.cuda.is_available() else "cpu")
+        torch.cuda.set_device(DEVICE)
+    
+    # nproc = 1  # Number of processes to run in parallel within the selected device. Not recommended to run in serial mode because it will take a long time
+    # with Pool(nproc) as p:
+    #     p.map(selection_main,
+    #                 zip(seed_slice,
+    #                     repeat(deepcopy(X)),
+    #                     repeat(deepcopy(Y)),
+    #                     repeat(deepcopy(model_predictors)),
+    #                     repeat(search_arr),
+    #                     repeat(seeds),
+    #                     repeat(DEVICE)
+    #                     ),
+    #         chunksize=1
+    #     )
+    for seed in seed_slice:
+        selection_main((seed, deepcopy(X), deepcopy(Y), deepcopy(model_predictors), search_arr, seeds, DEVICE))
+    
     if len([i for i in os.listdir(checkpoints_dir) if i.startswith('RPS_') and i.endswith('.npy')]) == len(seeds):
 
         lats = Y['var'].lat.values
@@ -136,6 +148,12 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Model selection sampling')
     parser.add_argument('-n','--number', help='Sample size', required=True, default=1000)
+    parser.add_argument('-i','--init_seed', help='Initial config', required=False, default=0)
+    parser.add_argument('-f','--final_seed', help='Final config', required=False, default=-1)
+    parser.add_argument('-gpu','--which_gpu', help='Run on a specific GPU', required=False, default=0)
     args = vars(parser.parse_args())
     n = int(args['number'])
-    main(n)
+    i = int(args['init_seed'])
+    f = int(args['final_seed'])
+    gpu = int(args['which_gpu'])
+    main(n, i, f, gpu)

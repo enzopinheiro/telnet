@@ -12,31 +12,11 @@ from copy import deepcopy
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 from models.model import TelNet
-from modules.submodules import PMI
 from utils import DataManager, CreateDataset, EvalMetrics
 from utils import DEVICE, exp_data_dir, exp_results_dir
 from utils import month2onehot, make_dir, compute_anomalies, scalar2categ, set_seed, printProgressBar
 from utilities.plots import plot_error_maps, plot_obs_ypred_maps
 
-def save_torch_model(model, config, n, model_dir, init_weights=False):
-
-    if init_weights:
-        torch.save(model.state_dict(), f'{model_dir}/telnet{n:04d}.init.pt')
-    else:
-        torch.save(model.state_dict(), f'{model_dir}/telnet{n:04d}.pt')
-    with open(f'{model_dir}/telnet{n:04d}.conf', 'w') as t:
-        t.write(config)
-
-    del model
-
-def load_torch_model(config, H, W, n):
-     
-    nunits, drop, weight_scale, epochs, lr, clip, batch_size, nfeats, time_steps, lead, nmembs = config
-
-    telnet = TelNet(nmembs, H, W, nfeats, nunits, time_steps, lead, drop, weight_scale)
-    telnet.load_state_dict(torch.load(f'{exp_data_dir}/pretrained/telnet{n:04d}.pt'))
-    
-    return telnet.to(DEVICE)
 
 def save_varsel_wgts(VSweights, init_month, lead, feat_order_dict, nfeats, outdir, fname):
     dims_vs = ['init_month', 'lead', 'index']
@@ -158,7 +138,8 @@ def split_sample(samples, test_samples=None):
 
 def training(X: Dict[str, DataManager], 
              Y: DataManager, 
-             model_config:list):
+             model_config:list,
+             DEVICE:str):
     
     nunits, drop, weight_scale, epochs, lr, clip, batch_size, nfeats, time_steps, lead, nmembs = model_config
     B = Y['train'].shape[0]
@@ -177,13 +158,13 @@ def training(X: Dict[str, DataManager],
     Xstatic = month2onehot(Y['train']['time.month'].values)
     Xtrain = [X['auto']['train'].values, X['cov']['train'].values, Xstatic]
     Ytrain = Y['train'].values
-    train_dataset = CreateDataset(Xtrain, Ytrain)
+    train_dataset = CreateDataset(Xtrain, Ytrain, DEVICE)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     Xstatic_val = month2onehot(Y['val']['time.month'].values)
     Xval = [X['auto']['val'].values, X['cov']['val'].values, Xstatic_val]
     Yval = Y['val'].values
-    val_dataset = CreateDataset(Xval, Yval)
+    val_dataset = CreateDataset(Xval, Yval, DEVICE)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     telnet = TelNet(nmembs, H, W, I, D, T, L, drop, weight_scale).to(DEVICE)
@@ -193,7 +174,8 @@ def training(X: Dict[str, DataManager],
 
 def inference(X: Dict[str, DataManager], 
               Y: DataManager,
-              telnet: nn.ModuleList):
+              telnet: nn.ModuleList,
+              DEVICE:str):
     
     Xstatic_val = month2onehot(Y['val']['time.month'].values)
     Xval = [
@@ -305,6 +287,7 @@ def split_validation(
         val_samples,
         model_predictors,
         model_config: list,
+        DEVICE: str
     ):
     
     nfeats = model_config[-4]
@@ -313,8 +296,8 @@ def split_validation(
     
     Xdm, Ydm = split_dataset(X, Y, train_samples, val_samples, model_predictors, nfeats, time_steps, lead)
 
-    telnet = training(Xdm, Ydm, model_config)
-    Ypred, Wgts = inference(Xdm, Ydm, telnet)
+    telnet = training(Xdm, Ydm, model_config, DEVICE)
+    Ypred, Wgts = inference(Xdm, Ydm, telnet, DEVICE)
     RMSE, RPS, SSR, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, pc_coefs, pc_loadings, vs_wgts = evaluate(Ydm, Ypred, Wgts)
 
     del telnet
@@ -332,10 +315,12 @@ def main(arguments):
     seeds: np.ndarray, 
     """
 
-    seed_n, X, Y, model_predictors, search_arr, seeds = arguments
+    seed_n, X, Y, model_predictors, search_arr, seeds, device = arguments
     
     seed_pos = np.argwhere(seeds == seed_n).flatten()[0]
     set_seed(seed_n)
+    if device is None:
+        device = DEVICE
     nconfigs = len(search_arr)
     init_months = [1, 4, 7, 10]
 
@@ -356,7 +341,7 @@ def main(arguments):
     
     for config in search_arr[n:]:
         leads = config[-2]
-        Ydm, rmse, rps, ssr, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, pc_coefs, pc_loadings, wgts = split_validation(deepcopy(X), deepcopy(Y), train_yrs, val_yrs, model_predictors, config) 
+        Ydm, rmse, rps, ssr, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, pc_coefs, pc_loadings, wgts = split_validation(deepcopy(X), deepcopy(Y), train_yrs, val_yrs, model_predictors, config, device) 
         if n == 0:
             for i, metric in enumerate([rmse, rps, ssr, ranks, ranks_ext, obs_freq, prob_avg, pred_marginal, rel, res, pc_coefs, pc_loadings]):
                 metrics[i] = np.full((nconfigs, *metric.shape), np.nan)

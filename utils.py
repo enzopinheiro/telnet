@@ -667,11 +667,11 @@ class DataManager:
 
 class CreateDataset(Dataset):
 
-    def __init__(self, X, Y):
-
-        self.X = [torch.as_tensor(x.astype(np.float32), device=DEVICE)
+    def __init__(self, X, Y, DEVICE):
+        self.DEVICE = DEVICE
+        self.X = [torch.as_tensor(x.astype(np.float32), device=self.DEVICE)
                   for x in X]
-        self.Y = torch.as_tensor(Y.astype(np.float32), device=DEVICE)
+        self.Y = torch.as_tensor(Y.astype(np.float32), device=self.DEVICE)
 
     def __len__(self):
 
@@ -680,7 +680,7 @@ class CreateDataset(Dataset):
     def __getitem__(self, idx):
         
         X = [x[idx] for x in self.X]
-        Xmask = torch.where(X[0][0:1]==-999., 0., 1.).to(DEVICE)
+        Xmask = torch.where(X[0][0:1]==-999., 0., 1.).to(self.DEVICE)
         Y = self.Y[idx]
 
         return X, Xmask, Y
