@@ -116,64 +116,67 @@ def main(nsamples, reproduce_paper=True):
     nmodels: int
     """
 
-    torch.multiprocessing.set_start_method('spawn')
-    init_time = datetime.now()
+    if not os.path.exists(os.path.join(f'{exp_data_dir}/models/', f'final_feats.txt')):
+        torch.multiprocessing.set_start_method('spawn')
+        init_time = datetime.now()
 
-    result_dir = f'{exp_results_dir}/selection/'
-    make_dir(result_dir)
-    checkpoints_dir = f'{exp_data_dir}/checkpoints_sel/'
-    make_dir(checkpoints_dir)
-    print ('Reading data ...')
-    X, Y, idcs_list = read_obs_data()
+        result_dir = f'{exp_results_dir}/selection/'
+        make_dir(result_dir)
+        checkpoints_dir = f'{exp_data_dir}/checkpoints_sel/'
+        make_dir(checkpoints_dir)
+        print ('Reading data ...')
+        X, Y, idcs_list = read_obs_data()
 
-    if os.path.exists(os.path.join(exp_data_dir, 'seeds_pmi.txt')):
-        # Read the existing seeds file
-        seeds = np.loadtxt(os.path.join(exp_data_dir, 'seeds_pmi.txt'), delimiter=',', dtype=int)
-    else:
-        if reproduce_paper:
-            seeds = np.arange(nsamples)
+        if os.path.exists(os.path.join(exp_data_dir, 'seeds_pmi.txt')):
+            # Read the existing seeds file
+            seeds = np.loadtxt(os.path.join(exp_data_dir, 'seeds_pmi.txt'), delimiter=',', dtype=int)
         else:
-            seeds = sample(range(100000), nsamples)
-        # Save seeds as a text file
-        np.savetxt(os.path.join(exp_data_dir, 'seeds_pmi.txt'), seeds, delimiter=',', fmt='%i')
-
-    full_feat_order = []
-
-    for seed_n in seeds:
-
-        seed_pos = np.argwhere(seeds == seed_n).flatten()[0]
-        set_seed(seed_n)
-
-        print ('Sampling years ...')
-        test_yrs = np.arange(2003, 2023)
-        train_yrs, val_yrs, test_yrs = split_sample(np.arange(1941, 2002), test_yrs)
-
-        print (f'Preprocessing data n={seed_pos} ...')
-        Xin, Yin = preprocess_data(deepcopy(X), deepcopy(Y), train_yrs)
-        print (f'Ranking variables n={seed_pos} ...')
-        feat_order = variable_selection(Xin, Yin, train_yrs, val_yrs)
-
-        full_feat_order.append(feat_order)
-    
-    full_feat_order = np.stack(full_feat_order, axis=0)  # (nsamples, indices)
-    plot_feat_freq(full_feat_order, result_dir)
-    
-    final_feats = []
-
-    for l in range(full_feat_order.shape[1]):
-        feat_freq = Counter(full_feat_order[:, l]).most_common(full_feat_order.shape[1])
-        print (feat_freq)
-        cond = False
-        k = 0
-        while cond == False:
-            if feat_freq[k][0] not in final_feats:
-                final_feats.append(feat_freq[k][0])  # Most frequent feature at position l
-                cond = True
+            if reproduce_paper:
+                seeds = np.arange(nsamples)
             else:
-                k += 1
-    print (final_feats)
+                seeds = sample(range(100000), nsamples)
+            # Save seeds as a text file
+            np.savetxt(os.path.join(exp_data_dir, 'seeds_pmi.txt'), seeds, delimiter=',', fmt='%i')
 
-    np.save(os.path.join(f'{exp_data_dir}/models/', f'final_feats.npy'), final_feats, allow_pickle=True)
+        full_feat_order = []
+
+        for seed_n in seeds:
+
+            seed_pos = np.argwhere(seeds == seed_n).flatten()[0]
+            set_seed(seed_n)
+
+            print ('Sampling years ...')
+            test_yrs = np.arange(2003, 2023)
+            train_yrs, val_yrs, test_yrs = split_sample(np.arange(1941, 2002), test_yrs)
+
+            print (f'Preprocessing data n={seed_pos} ...')
+            Xin, Yin = preprocess_data(deepcopy(X), deepcopy(Y), train_yrs)
+            print (f'Ranking variables n={seed_pos} ...')
+            feat_order = variable_selection(Xin, Yin, train_yrs, val_yrs)
+
+            full_feat_order.append(feat_order)
+        
+        full_feat_order = np.stack(full_feat_order, axis=0)  # (nsamples, indices)
+        plot_feat_freq(full_feat_order, result_dir)
+        
+        final_feats = []
+
+        for l in range(full_feat_order.shape[1]):
+            feat_freq = Counter(full_feat_order[:, l]).most_common(full_feat_order.shape[1])
+            print (feat_freq)
+            cond = False
+            k = 0
+            while cond == False:
+                if feat_freq[k][0] not in final_feats:
+                    final_feats.append(feat_freq[k][0])  # Most frequent feature at position l
+                    cond = True
+                else:
+                    k += 1
+        print (final_feats)
+
+        np.savetxt(os.path.join(f'{exp_data_dir}/models/', f'final_feats.txt'), final_feats, delimiter=' ', fmt='%s')
+    else:
+        print ('Final features file already exists. Skipping feature selection.')
 
 
 if __name__ == "__main__":

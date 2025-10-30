@@ -135,13 +135,13 @@ def training(X: Dict[str, DataManager],
     Xtrain_static = month2onehot(Y['train']['time.month'].values)
     Xtrain = [X['auto']['train'].values, X['cov']['train'].values, Xtrain_static]
     Ytrain = Y['train'].values
-    train_dataset = CreateDataset(Xtrain, Ytrain)
+    train_dataset = CreateDataset(Xtrain, Ytrain, DEVICE)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     Xval_static = month2onehot(Y['val']['time.month'].values)
     Xval = [X['auto']['val'].values, X['cov']['val'].values, Xval_static]
     Yval = Y['val'].values
-    val_dataset = CreateDataset(Xval, Yval)
+    val_dataset = CreateDataset(Xval, Yval, DEVICE)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
     telnet = TelNet(nmembs, H, W, I, D, T, L, drop, weight_scale).to(DEVICE)

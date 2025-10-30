@@ -11,7 +11,6 @@ from random import sample
 from datetime import datetime
 from multiprocessing import Pool
 from model_selection import main as selection_main
-from gen_init_weights import main as init_weights_main
 from utils import exp_data_dir, exp_results_dir, make_dir, read_obs_data, get_search_matrix
 from utilities.plots import plot_boxplot, plot_error_maps, plot_mn_varsel_wgts, plot_model_freq, plot_feat_freq, plot_pca_maps, plot_prob_diags, plot_rank_histogram
 
@@ -25,7 +24,7 @@ def main(nsamples, iconfig=0, fconfig=-1, which_gpu=None):
     make_dir(result_dir)
     print ('Reading data ...')
     X, Y, idcs_list = read_obs_data()
-    model_predictors = np.load(os.path.join(f'{exp_data_dir}/models/', f'final_feats.npy'), allow_pickle=True)
+    model_predictors = np.loadtxt(os.path.join(f'{exp_data_dir}/models/', f'final_feats.txt'), dtype=str, delimiter=' ')
     search_arr, search_df = get_search_matrix()
     init_months = [1, 4, 7, 10]
     if os.path.exists(os.path.join(exp_data_dir, 'seeds_sel.txt')):

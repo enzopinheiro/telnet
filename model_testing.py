@@ -37,7 +37,7 @@ def main(nsamples, config_n):
     model_config = search_arr[config_n]
     model_config = [int(x) if x % 1 == 0 else float(x) for x in model_config]
     nfeats = model_config[7]
-    model_predictors = np.load(os.path.join(f'{exp_data_dir}/models/', f'final_feats.npy'), allow_pickle=True)[:nfeats]
+    model_predictors = np.loadtxt(os.path.join(f'{exp_data_dir}/models/', f'final_feats.txt'), dtype=str, delimiter=' ')[:nfeats]
     X['cov']['var'] = X['cov']['var'].sel(indices=model_predictors)
 
     if os.path.exists(os.path.join(exp_data_dir, 'seeds_model.txt')):

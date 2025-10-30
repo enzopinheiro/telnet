@@ -20,7 +20,7 @@ from scipy.signal import detrend
 from torch.utils.data import Dataset
 
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
 print (DEVICE)
 
 # Dir paths
@@ -77,13 +77,14 @@ def read_obs_data():
     era5_dir = f'{root_datadir}/era5/'
 
     idcs_list = ['oni', 'atn-sst', 'ats-sst', 'atl-sst', 'iod', 'iobw', 'nao', 'pna', 'aao', 'ao']
-    indices = read_indices_data('1941-01-01', '2023-12-01', era5_dir, idcs_list, '_1941-2023')
+    indices = read_indices_data('1941-01-01', '2023-12-01', root_datadir, idcs_list, '_1941-2024')
     pcp = read_era5_data('pr', era5_dir, mask_ocean=True, period=('1940-01-01', '2024-01-01'))
 
     cov_date_s = ('1941-01-01', '2023-12-01')
     auto_date_s = ('1940-12-01', '2024-01-01')
     pred_date_s = ('1940-12-01', '2024-01-01')
-    target_bounds = ((12., 8.), (-86., -82.))  # ERA5
+    # target_bounds = ((12., 8.), (-105., -82.))  # Costa Rica ERA5
+    target_bounds = ((None, None), (None, None))  # ERA5
     
     X = {'auto': deepcopy(pcp['pr']), 'cov': deepcopy(indices)}
     Y = deepcopy(pcp['pr'])
@@ -200,19 +201,15 @@ def read_indices_data(init_date, final_date, datadir, indices='all', institute='
 
 def read_era5_data(var, datadir, region_mask=None, mask_ocean=False, period=('1940-01-01', '2024-12-01')):
 
-    df_var = xr.open_dataset(f'{datadir}/e5_monthly_{var}_south-america_1940-2024.nc').sel(time=slice(period[0], period[1]))
+    df_var = xr.open_dataset(f'{datadir}/era5_{var}_1940-2024_preprocessed.nc').sel(time=slice(period[0], period[1]))
     if region_mask is not None:
         mask = shape2mask(region_mask, df_var['lon'].values, df_var['lat'].values, 1.)
         df_var['pr'].values[:, ~mask] = np.nan
     if mask_ocean:
         lat = df_var['lat'].values
         lon = df_var['lon'].values
-        mask = xr.open_dataset(f'{datadir}/e5_land_sea_mask_south_america.nc').sel(lat=lat, lon=lon)
+        mask = xr.open_dataset(f'{datadir}/era5_land_sea_mask_1940-2024_preprocessed.nc').sel(lat=lat, lon=lon).isel(time=0)
         df_var = df_var.where(np.tile(mask['lsm'].values, (df_var.time.size, 1, 1)) > 0.5, np.nan)
-
-    ndays = np.tile(np.array([monthrange(i.year, i.month)[1] for i in pd.to_datetime(df_var['pr'].time.values)])[:, None, None], ((1, df_var['pr'].shape[1], df_var['pr'].shape[2])))
-    df_var['pr'] = df_var['pr']*1000*ndays
-    df_var['pr']['units'] = 'mm'
 
     return df_var
 

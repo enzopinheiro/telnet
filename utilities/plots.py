@@ -141,6 +141,7 @@ def plot_prob_maps(fig, x, y, z, title='', probs=False):
     if probs == False:
         colors = ('#DF252B', '#28DF25', '#2539DF')
         cmap = clr.ListedColormap(colors)
+        cmap.set_bad('gray')
         lvls = np.array([0.5, 1.5, 2.5, 3.5])
         norm = BoundaryNorm(lvls, ncolors=cmap.N, clip=False)
         z = z+1.
@@ -161,18 +162,21 @@ def plot_prob_maps(fig, x, y, z, title='', probs=False):
         cmap_BN = clr.ListedColormap(colors_BN)
         cmap_BN.set_over('#8D0000')
         cmap_BN.set_under('#ffffff')
+        cmap_BN.set_bad('gray')
         norm_BN = BoundaryNorm(lvls, ncolors=cmap_BN.N)
 
         colors_NN = ('#9FFC9D', '#58C255', '#1CC617')
         cmap_NN = clr.ListedColormap(colors_NN)
         cmap_NN.set_over('#068102')
         cmap_NN.set_under('#ffffff')
+        cmap_NN.set_bad('gray')
         norm_NN = BoundaryNorm(lvls, ncolors=cmap_NN.N)
 
         colors_AN = ('#73FFF5', '#73BDFF', '#0086FD')
         cmap_AN = clr.ListedColormap(colors_AN)
         cmap_AN.set_over('#003665')
         cmap_AN.set_under('#ffffff')
+        cmap_AN.set_bad('gray')
         norm_AN = BoundaryNorm(lvls, ncolors=cmap_AN.N)
 
         c1 = fig.ax.pcolormesh(x, y, z[0], cmap=cmap_BN, norm=norm_BN, alpha=np.where(cats!=0, 0, 1))
@@ -193,6 +197,7 @@ def plot_determ_maps(fig, x, y, z,
     fig.ax.add_feature(cartopy.feature.OCEAN, zorder=100, edgecolor='k', facecolor='gray')
 
     cmap = clr.ListedColormap(colors)
+    cmap.set_bad('gray')
     norm = BoundaryNorm(lvls, ncolors=cmap.N, extend=extend)
 
     c = fig.ax.pcolormesh(x, y, z, cmap=cmap, norm=norm)
@@ -210,7 +215,10 @@ def plot_obs_ypred_maps(x, y, time, Yobs, Ypred, Yobs_anom, Ypred_anom, Yobs_cat
     y: meshed lat lon 2d array 
     """
 
+    # mask locations where no category probability exceeds 0.4
+    mask_categs = np.max(Ypred_probs, axis=1) < 0.4  # shape: (N, H, W)
     Ypred_categs = np.argmax(Ypred_probs, axis=1)
+    Ypred_categs = np.where(mask_categs, np.nan, Ypred_categs)
     Yobs_categs = np.argmax(Yobs_categs, axis=1)
     n = Ypred.shape[0]
     fig = MakePlot(figsize)
@@ -285,6 +293,80 @@ def plot_obs_ypred_maps(x, y, time, Yobs, Ypred, Yobs_anom, Ypred_anom, Yobs_cat
                 cbar.ax.set_xticklabels(['40', '55', '70', '85'])
                 cbar.ax.tick_params(labelsize=5, direction='in')
         k+=1
+    plt.suptitle(title)
+    if not os.path.exists(savedir):
+        os.makedirs(savedir)
+    plt.savefig(f'{savedir}/{filename}', dpi=300, bbox_inches='tight')
+    plt.close()
+
+def plot_ypred_maps(x, y, time, Ypred, Ypred_anom, Ypred_probs, varsel_weights, var_names, title, filename, savedir, figsize=(12, 8),
+                    levels_totals=[0, 50, 100, 200, 300, 500, 800, 1100, 1400, 1700, 2000]):
+    
+    """
+    x: meshed lat lon 2d array 
+    y: meshed lat lon 2d array 
+    """
+
+    # mask locations where no category probability exceeds 0.4
+    mask_categs = np.max(Ypred_probs, axis=1) < 0.4  # shape: (N, H, W)
+    Ypred_categs = np.argmax(Ypred_probs, axis=1)
+    Ypred_categs = np.where(mask_categs, np.nan, Ypred_categs)
+    Ypred_probs = np.where(mask_categs[None, :, :], np.nan, Ypred_probs)
+    Ypred_anom = np.where(np.isnan(Ypred), np.nan, Ypred_anom)
+
+    lvl_anoms = [-1., -0.75, -0.5, -0.25, -0.1, 0.1, 0.25, 0.5, 0.75, 1.]
+    
+    fig = MakePlot(figsize)
+    fig.create_fig_instance(1, 1)
+    fig.create_subplot_instance(3, 6, 0, hspace=0.5)
+
+    # Totals
+    fig.create_axis_instance(0, 1, 0, 3, ccrs.PlateCarree())
+    c, cbar = plot_determ_maps(fig, x, y, Ypred[0], 
+                colors=('#FFFFFF', '#F20000', '#FDB826', '#EDF937', '#A8DD36', '#65C13E', '#28A54B', '#1E8079', '#3254BD', '#6B55FF', '#7B007A'),  
+                extend='max', lvls=levels_totals, cbar=True)
+    fig.add_gridlines()
+    cbar.ax.set_xticks(levels_totals)
+    cbar.ax.tick_params(labelsize=8)
+    fig.ax.set_title(f'Forecasted totals')
+
+    # Anomalies    
+    fig.create_axis_instance(0, 1, 3, 6, ccrs.PlateCarree())
+    c, cbar = plot_determ_maps(fig, x, y, Ypred_anom[0], lvls=lvl_anoms)
+    fig.add_gridlines()
+    cbar.ax.tick_params(labelsize=8)
+    fig.ax.set_title(f'Forecasted std anomalies')
+
+    # Categories
+    fig.create_axis_instance(1, 2, 0, 3, ccrs.PlateCarree())
+    c = plot_prob_maps(fig, x, y, Ypred_categs[0])
+    fig.add_gridlines()
+    fig.ax.set_title(f'Forecasted categories')
+
+    # Probabilities
+    fig.create_axis_instance(1, 2, 3, 6, ccrs.PlateCarree())
+    c1, c2, c3 = plot_prob_maps(fig, x, y, Ypred_probs[0], probs=True)
+    fig.add_gridlines()
+    fig.ax.set_title(f'Forecasted probabilities')
+    ticks = np.array([0.40, 0.55, 0.70, 0.85])
+    x0 = fig.ax.get_position().x0
+    x1 = fig.ax.get_position().x1
+    cax_length = ((x1 - x0)/3)
+    y0 = fig.ax.get_position().y0
+    cax1 = fig.fig.add_axes([x0, y0-0.05, cax_length, 0.015])  # Add a new axes for the colorbar
+    cax2 = fig.fig.add_axes([x0+cax_length, y0-0.05, cax_length, 0.015])
+    cax3 = fig.fig.add_axes([x0+cax_length*2, y0-0.05, cax_length, 0.015])
+    cbar1 = fig.fig.colorbar(c1, cax=cax1, orientation='horizontal', ticks=ticks, extend='max', extendfrac=0.2)
+    cbar2 = fig.fig.colorbar(c2, cax=cax2, orientation='horizontal', ticks=ticks, extend='max', extendfrac=0.2)
+    cbar3 = fig.fig.colorbar(c3, cax=cax3, orientation='horizontal', ticks=ticks, extend='max', extendfrac=0.2)
+    for cbar in [cbar1, cbar2, cbar3]:
+        cbar.ax.set_xticklabels(['40', '55', '70', '85'])
+        cbar.ax.tick_params(labelsize=8, direction='in')
+
+    # Varsel Weights
+    fig.create_axis_instance(2, 3, 1, 5)
+    plot_varsel_wgts(fig.ax, varsel_weights, var_names)
+    
     plt.suptitle(title)
     if not os.path.exists(savedir):
         os.makedirs(savedir)
