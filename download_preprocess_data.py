@@ -9,16 +9,18 @@ import numpy as np
 from utils import exp_data_dir
 
 
-def merge_present_data(var, final_date):
+def merge_present_data(var, init_date, final_date):
 
     root_datadir = os.getenv('TELNET_DATADIR')
     era5_dir = os.path.join(root_datadir, 'era5')
     old_file = os.path.join(era5_dir, f'era5_{var}_2025-present_preprocessed.nc')
-    new_file = os.path.join(era5_dir, f'era5_{var}_2025-{final_date[:4]}_preprocessed.nc')
+    new_file = os.path.join(era5_dir, f'era5_{var}_{init_date[:4]}-{final_date[:4]}_preprocessed.nc')
     if os.path.exists(old_file):
         ds_old = xr.open_dataset(old_file)
         ds_new = xr.open_dataset(new_file)
         ds_merged = xr.concat([ds_old, ds_new], dim='time')
+        ds_old.close()
+        ds_new.close()
         ds_merged.to_netcdf(old_file)
         os.remove(new_file)
         print (f'Merged {var} data for 2025-present with newly downloaded data up to {final_date}.')
@@ -26,6 +28,7 @@ def merge_present_data(var, final_date):
         print (f'No existing 2025-present {var} data found to merge. Creating new file.')
         ds_new = xr.open_dataset(new_file)
         ds_new.to_netcdf(old_file)
+        ds_new.close()
         os.remove(new_file)
 
 def update_dates(init_date, final_date):
@@ -57,7 +60,8 @@ def download_ersstv5(init_date, final_date):
         wget.download(download_link, f"{root_datadir}/ersstv5_tmp.nc")
         ds = xr.open_dataset(f"{root_datadir}/ersstv5_tmp.nc")
         ds = ds.sel(time=slice(init_date, final_date)).drop('time_bnds')
-        ds.to_netcdf(f"{root_datadir}/ersstv5_{iyr}-{fyr}.nc")
+        ds.to_netcdf(f"{root_datadir}/ersstv5_{init_date[:4]}-{fyr}.nc")
+        ds.close()
         os.remove(f"{root_datadir}/ersstv5_tmp.nc")
         print (f"\nERSSTv5 data downloaded and saved to {root_datadir}/ersstv5_{iyr}-{fyr}.nc")
     else:
@@ -132,6 +136,7 @@ def download_era5(init_date, final_date):
                 ds = xr.open_dataset(os.path.join(era5_dir, f'era5_{var}_{level}_tmp.nc'))
                 ds = ds.sel(valid_time=slice(init_date, final_date))
                 ds.to_netcdf(os.path.join(era5_dir, f'era5_{var_forms[var]}_{level}_{iyr}-{fyr}.nc'))
+                ds.close()
                 os.remove(os.path.join(era5_dir, f'era5_{var}_{level}_tmp.nc'))
             else:
                 print (f"{var} data already exists. Skipping download.")
@@ -143,6 +148,7 @@ def download_era5(init_date, final_date):
             ds = xr.open_dataset(os.path.join(era5_dir, f'era5_{var}_tmp.nc'))
             ds = ds.sel(valid_time=slice(init_date, final_date))
             ds.to_netcdf(os.path.join(era5_dir, f'era5_{var_forms[var]}_{iyr}-{fyr}.nc'))
+            ds.close()
             os.remove(os.path.join(era5_dir, f'era5_{var}_tmp.nc'))
         else:
             print (f"{var} data already exists. Skipping download.")
@@ -184,6 +190,7 @@ def preprocess_era5(var, init_date, final_date, lats, lons):
             ds = ds.sel(lat=slice(lats[1], lats[0]), lon=slice(lons[0], lons[1]))
 
         ds.to_netcdf(os.path.join(era5_dir, f'era5_{var}_{iyr}-{fyr}_preprocessed.nc'))
+        ds.close()
         os.remove(os.path.join(era5_dir, f'era5_{var}_{iyr}-{fyr}.nc'))
     else:
         print (f'Preprocessed {var} data already exists. Skipping preprocessing.')
@@ -247,7 +254,7 @@ if __name__ == "__main__":
         if int(final_date[:4]) > 2024:
             # Concatenate existing 2025-present data with downloaded data
             for var in final_vars:
-                merge_present_data(var, final_date)
+                merge_present_data(var, init_date, final_date)
 
     else:
         print ('Preprocessed ERA5 data for all variables already exists. Skipping download and preprocessing.')
