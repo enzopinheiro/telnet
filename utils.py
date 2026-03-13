@@ -76,7 +76,7 @@ def read_obs_data():
 
     era5_dir = f'{root_datadir}/era5/'
 
-    idcs_list = ['oni', 'atn-sst', 'ats-sst', 'atl-sst', 'iod', 'iobw', 'nao', 'pna', 'aao', 'ao']
+    idcs_list = ['oni', 'pdo', 'atn-sst', 'ats-sst', 'atl-sst', 'sasdi', 'iobw', 'iod', 'ao', 'aao', 'psa1', 'psa2', 'nao', 'pna']
     indices = read_indices_data('1941-01-01', '2023-12-01', root_datadir, idcs_list, '_1941-2024')
     pcp = read_era5_data('pr', era5_dir, mask_ocean=True, period=('1940-01-01', '2024-01-01'))
 
